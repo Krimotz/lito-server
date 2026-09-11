@@ -2,7 +2,7 @@ const express = require('express');
 const expressWs = require('express-ws');
 
 const app = express();
-expressWs(app); // Initialize express-ws
+expressWs(app);
 
 const PORT = process.env.PORT || 8080;
 
@@ -18,20 +18,24 @@ app.get('/health', (req, res) => {
   res.status(200).send('LiTo relay is running');
 });
 
-// Root endpoint (optional, for browser visits)
+// Root endpoint
 app.get('/', (req, res) => {
   res.send('LiTo relay is running');
 });
 
-// WebSocket endpoint
-app.ws('/(:role)/(:roomId)', (ws, req) => {
-  const { role, roomId } = req.params;
-
-  if (role !== 'broadcast' && role !== 'listen') {
-    ws.close(1008, 'invalid role');
+// WebSocket endpoint - accepts ANY path and parses it manually
+// This avoids Express 5 route syntax incompatibilities
+app.ws('/*', (ws, req) => {
+  // Parse the URL: /broadcast/<roomId> or /listen/<roomId>
+  const match = req.url.match(/^\/(broadcast|listen)\/([a-zA-Z0-9-]+)/);
+  
+  if (!match) {
+    log('Invalid WebSocket path:', req.url);
+    ws.close(1008, 'invalid path');
     return;
   }
 
+  const [, role, roomId] = match;
   log(`${role} joined room ${roomId}`);
 
   if (!rooms.has(roomId)) rooms.set(roomId, new Set());
@@ -45,7 +49,7 @@ app.ws('/(:role)/(:roomId)', (ws, req) => {
     if (ws.role !== 'broadcast') return;
     if (!isBinary) return;
     for (const peer of room) {
-      if (peer !== ws && peer.readyState === 1) { // 1 = OPEN
+      if (peer !== ws && peer.readyState === 1) {
         peer.send(data, { binary: true });
       }
     }
