@@ -1,7 +1,10 @@
-const WebSocket = require('ws');
+const express = require('express');
+const expressWs = require('express-ws');
+
+const app = express();
+expressWs(app); // Initialize express-ws
 
 const PORT = process.env.PORT || 8080;
-const wss = new WebSocket.Server({ port: PORT });
 
 // Map<roomId, Set<WebSocket>>
 const rooms = new Map();
@@ -10,15 +13,25 @@ function log(...args) {
   console.log(new Date().toISOString(), ...args);
 }
 
-wss.on('connection', (ws, req) => {
-  // URL shape: /broadcast/<roomId>  or  /listen/<roomId>
-  const match = req.url.match(/^\/(broadcast|listen)\/([a-zA-Z0-9-]+)/);
-  if (!match) {
-    ws.close(1008, 'invalid path');
+// Health check endpoint for Render
+app.get('/health', (req, res) => {
+  res.status(200).send('LiTo relay is running');
+});
+
+// Root endpoint (optional, for browser visits)
+app.get('/', (req, res) => {
+  res.send('LiTo relay is running');
+});
+
+// WebSocket endpoint
+app.ws('/(:role)/(:roomId)', (ws, req) => {
+  const { role, roomId } = req.params;
+
+  if (role !== 'broadcast' && role !== 'listen') {
+    ws.close(1008, 'invalid role');
     return;
   }
 
-  const [, role, roomId] = match;
   log(`${role} joined room ${roomId}`);
 
   if (!rooms.has(roomId)) rooms.set(roomId, new Set());
@@ -29,10 +42,10 @@ wss.on('connection', (ws, req) => {
   room.add(ws);
 
   ws.on('message', (data, isBinary) => {
-    if (ws.role !== 'broadcast') return;   // only broadcasters send audio
-    if (!isBinary) return;                 // ignore any text frames
+    if (ws.role !== 'broadcast') return;
+    if (!isBinary) return;
     for (const peer of room) {
-      if (peer !== ws && peer.readyState === WebSocket.OPEN) {
+      if (peer !== ws && peer.readyState === 1) { // 1 = OPEN
         peer.send(data, { binary: true });
       }
     }
@@ -49,4 +62,6 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-log(`LiTo relay server listening on port ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  log(`LiTo relay server listening on port ${PORT}`);
+});
