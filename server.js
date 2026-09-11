@@ -24,11 +24,8 @@ app.get('/', (req, res) => {
 });
 
 // WebSocket endpoint - accepts ANY path and parses it manually
-// This avoids Express 5 route syntax incompatibilities
 app.ws('/*', (ws, req) => {
-  // Parse the URL: /broadcast/<roomId> or /listen/<roomId>
   const match = req.url.match(/^\/(broadcast|listen)\/([a-zA-Z0-9-]+)/);
-  
   if (!match) {
     log('Invalid WebSocket path:', req.url);
     ws.close(1008, 'invalid path');
@@ -36,19 +33,42 @@ app.ws('/*', (ws, req) => {
   }
 
   const [, role, roomId] = match;
-  log(`${role} joined room ${roomId}`);
+  log(`${role} attempting to join room ${roomId}`);
 
-  if (!rooms.has(roomId)) rooms.set(roomId, new Set());
   const room = rooms.get(roomId);
 
-  ws.role = role;
-  ws.roomId = roomId;
-  room.add(ws);
+  // Broadcaster: always allowed, creates the room
+  if (role === 'broadcast') {
+    if (!rooms.has(roomId)) rooms.set(roomId, new Set());
+    const r = rooms.get(roomId);
+    r.add(ws);
+    ws.role = role;
+    ws.roomId = roomId;
+    ws.send(JSON.stringify({ type: 'joined', role, roomId }));
+    log(`broadcast joined room ${roomId}`);
+  }
+
+  // Listener: only allowed if a broadcaster is already present
+  else if (role === 'listen') {
+    if (!room || room.size === 0) {
+      log(`listen rejected: no broadcaster in room ${roomId}`);
+      ws.send(JSON.stringify({ type: 'error', message: 'No broadcaster in that room' }));
+      ws.close(1008, 'no broadcaster');
+      return;
+    }
+    room.add(ws);
+    ws.role = role;
+    ws.roomId = roomId;
+    ws.send(JSON.stringify({ type: 'joined', role, roomId }));
+    log(`listen joined room ${roomId}`);
+  }
 
   ws.on('message', (data, isBinary) => {
     if (ws.role !== 'broadcast') return;
     if (!isBinary) return;
-    for (const peer of room) {
+    const r = rooms.get(ws.roomId);
+    if (!r) return;
+    for (const peer of r) {
       if (peer !== ws && peer.readyState === 1) {
         peer.send(data, { binary: true });
       }
@@ -56,13 +76,15 @@ app.ws('/*', (ws, req) => {
   });
 
   ws.on('close', () => {
-    log(`${role} left room ${roomId}`);
-    room.delete(ws);
-    if (room.size === 0) rooms.delete(roomId);
+    log(`${ws.role} left room ${ws.roomId}`);
+    const r = rooms.get(ws.roomId);
+    if (!r) return;
+    r.delete(ws);
+    if (r.size === 0) rooms.delete(ws.roomId);
   });
 
   ws.on('error', (err) => {
-    log(`error in room ${roomId}:`, err.message);
+    log(`error in room ${ws.roomId}:`, err.message);
   });
 });
 
