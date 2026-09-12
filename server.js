@@ -44,6 +44,26 @@ app.ws('/*', (ws, req) => {
     r.add(ws);
     ws.role = role;
     ws.roomId = roomId;
+      // ═══════════════════════════════════════════════════════════════
+  // TEMPORARY DIAGNOSTIC — remove once audio is flowing
+  // ═══════════════════════════════════════════════════════════════
+  let diagCount = 0;
+  const originalOn = ws.on.bind(ws);
+  ws.on = function (event, handler) {
+    if (event === 'message') {
+      log(`[DIAG] attaching message listener for ${role} ${roomId}`);
+      return originalOn(event, (data, isBinary) => {
+        diagCount++;
+        if (diagCount <= 5 || diagCount % 100 === 0) {
+          const size = Buffer.isBuffer(data) ? data.length : (data?.byteLength ?? 'unknown');
+          log(`[DIAG] ${role} ${roomId} frame #${diagCount}: isBinary=${isBinary} size=${size} type=${typeof data} ctor=${data?.constructor?.name}`);
+        }
+        return handler(data, isBinary);
+      });
+    }
+    return originalOn(event, handler);
+  };
+  // ═══════════════════════════════════════════════════════════════
     ws.send(JSON.stringify({ type: 'joined', role, roomId }));
     log(`broadcast joined room ${roomId}`);
   }
