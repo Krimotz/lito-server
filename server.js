@@ -63,17 +63,34 @@ app.ws('/*', (ws, req) => {
     log(`listen joined room ${roomId}`);
   }
 
-  ws.on('message', (data, isBinary) => {
-    if (ws.role !== 'broadcast') return;
-    if (!isBinary) return;
-    const r = rooms.get(ws.roomId);
-    if (!r) return;
-    for (const peer of r) {
-      if (peer !== ws && peer.readyState === 1) {
-        peer.send(data, { binary: true });
+ws.on('message', (data, isBinary) => {
+  if (ws.role !== 'broadcast') return;
+  if (!isBinary) return;
+
+  const r = rooms.get(ws.roomId);
+  if (!r) return;
+
+  // Ensure we're working with a Buffer regardless of ws's internal type
+  const payload = Buffer.isBuffer(data) ? data : Buffer.from(data);
+
+  let relayed = 0;
+  for (const peer of r) {
+    if (peer !== ws && peer.readyState === 1) {
+      try {
+        peer.send(payload);
+        relayed++;
+      } catch (err) {
+        log(`relay error in room ${ws.roomId}: ${err.message}`);
       }
     }
-  });
+  }
+
+  // Log every 100 chunks (~5s of audio) to confirm bytes are flowing
+  ws._relayCounter = (ws._relayCounter || 0) + 1;
+  if (ws._relayCounter % 100 === 0) {
+    log(`relayed ${ws._relayCounter} chunks from ${ws.roomId} to ${relayed} listener(s)`);
+  }
+});
 
   ws.on('close', () => {
     log(`${ws.role} left room ${ws.roomId}`);
