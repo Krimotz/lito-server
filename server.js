@@ -85,12 +85,18 @@ app.ws('/*', (ws, req) => {
 
 ws.on('message', (data, isBinary) => {
   if (ws.role !== 'broadcast') return;
-  if (!isBinary) return;
+
+  // Distinguish audio from control messages by payload type, not the isBinary flag.
+  // express-ws sometimes delivers the flag as undefined even for binary frames.
+  const isBuffer = Buffer.isBuffer(data) || (data && data.constructor && data.constructor.name === 'Buffer');
+  if (!isBuffer) {
+    // Text frames are control messages, not audio — ignore them here
+    return;
+  }
 
   const r = rooms.get(ws.roomId);
   if (!r) return;
 
-  // Ensure we're working with a Buffer regardless of ws's internal type
   const payload = Buffer.isBuffer(data) ? data : Buffer.from(data);
 
   let relayed = 0;
@@ -105,7 +111,6 @@ ws.on('message', (data, isBinary) => {
     }
   }
 
-  // Log every 100 chunks (~5s of audio) to confirm bytes are flowing
   ws._relayCounter = (ws._relayCounter || 0) + 1;
   if (ws._relayCounter % 100 === 0) {
     log(`relayed ${ws._relayCounter} chunks from ${ws.roomId} to ${relayed} listener(s)`);
